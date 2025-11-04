@@ -1,0 +1,186 @@
+{
+  "name": "AI Meal Planner - Main Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ]
+      },
+      "id": "8f7e6d5c-4b3a-2918-7654-321098765432",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "auto-generated-on-activation",
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram OMAD Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract user data from Telegram update\nconst input = $input.first().json;\nconst message = input.message || input.callback_query?.message;\nconst from = input.message?.from || input.callback_query?.from;\n\n// Handle different update types\nlet messageText = '';\nlet callbackData = null;\n\nif (input.message) {\n    messageText = input.message.text || input.message.caption || '';\n} else if (input.callback_query) {\n    messageText = input.callback_query.message.text || '';\n    callbackData = input.callback_query.data;\n}\n\n// Extract user info\nconst userData = {\n    telegram_user_id: from.id,\n    telegram_username: from.username || null,\n    telegram_first_name: from.first_name || null,\n    telegram_last_name: from.last_name || null,\n    chat_id: message.chat.id,\n    message_id: message.message_id,\n    message_text: messageText,\n    callback_data: callbackData,\n    is_command: messageText.startsWith('/'),\n    command: messageText.startsWith('/') ? messageText.split(' ')[0].substring(1) : null,\n    command_args: messageText.startsWith('/') ? messageText.split(' ').slice(1).join(' ') : null,\n    message_type: input.message ? 'message' : 'callback_query',\n    timestamp: new Date().toISOString(),\n    request_id: `${from.id}_${Date.now()}`\n};\n\nreturn [{ json: userData }];"
+      },
+      "id": "7e6d5c4b-3a29-1807-6543-210987654321",
+      "name": "Extract User Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simple intent classification\nconst messageText = $json.message_text || '';\nconst command = $json.command;\n\nlet intent = 'help';\n\nif (command) {\n    const intentMap = {\n        'start': 'help',\n        'meal': 'single_meal',\n        'week': 'weekly_plan',\n        'grocery': 'grocery_list',\n        'history': 'meal_history',\n        'settings': 'settings',\n        'help': 'help'\n    };\n    intent = intentMap[command] || 'help';\n} else {\n    const text = messageText.toLowerCase();\n    if (text.includes('cook4me') || text.includes('pressure')) {\n        intent = 'single_meal_cook4me';\n    } else if (text.includes('week') || text.includes('plan')) {\n        intent = 'weekly_plan';\n    } else if (text.includes('meal') || text.includes('recipe')) {\n        intent = 'single_meal';\n    }\n}\n\nreturn [{\n    json: {\n        ...$json,\n        intent: intent,\n        intent_confidence: 0.95\n    }\n}];"
+      },
+      "id": "06050403-0201-0099-8765-432109876543",
+      "name": "Classify Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.intent}}",
+              "value2": "single_meal"
+            }
+          ]
+        }
+      },
+      "id": "05040302-0100-0098-7654-321098765432",
+      "name": "Is Single Meal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate meal response\nconst intent = $json.intent;\n\nlet message = '';\n\nif (intent === 'single_meal' || intent === 'single_meal_cook4me') {\n    message = `🍽️ *Cook4me Meal Generated*\\n\\n*Chicken & Rice Bowl*\\n\\n📊 Nutrition:\\n• Calories: 2,290 kcal\\n• Protein: 145g\\n• Carbs: 255g\\n• Fat: 72g\\n\\n👨‍🍳 Cook4me pressure cooker\\n\\n_This is a placeholder. In production, this generates real meals._`;\n} else if (intent === 'weekly_plan') {\n    message = `📅 *Weekly Meal Plan*\\n\\nMonday-Sunday meal plan coming soon!\\n\\n_Use /meal for single meals._`;\n} else if (intent === 'grocery_list') {\n    message = `🛒 *Grocery List*\\n\\nAuto-generated lists coming soon!\\n\\n_Use /meal for single meals._`;\n} else if (intent === 'settings') {\n    message = `⚙️ *Settings*\\n\\nCalories: 2,300 kcal/day\\nProtein: 130-160g\\nCooking: Cook4me\\n\\n_Settings update coming soon._`;\n} else if (intent === 'meal_history') {\n    message = `📊 *Meal History*\\n\\nYour meal tracking coming soon!\\n\\n_Use /meal for single meals._`;\n} else {\n    // Help message\n    const isNew = !$json.user_id;\n    if (isNew) {\n        message = `👋 *Welcome to OMAD Meal Planner!*\\n\\nI'm your AI meal planning assistant.\\n\\n*Commands:*\\n/meal - Generate meal\\n/week - Weekly plan\\n/help - Show help\\n\\nTry: \"Generate a chicken meal\"`;\n    } else {\n        message = `🤖 *OMAD Meal Planner*\\n\\n*Commands:*\\n/meal - Single meal\\n/week - Weekly plan\\n/grocery - Grocery list\\n/history - Past meals\\n/settings - Preferences\\n\\nJust describe what you want!`;\n    }\n}\n\nreturn [{\n    json: {\n        ...$json,\n        response_message: message,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "04030201-0099-0097-6543-210987654321",
+      "name": "Generate Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Help response for false branch\nconst message = `🤖 *OMAD Meal Planner*\\n\\n*Available Commands:*\\n\\n/meal - Generate single meal\\n/week - 7-day meal plan\\n/grocery - View grocery list\\n/help - Show this message\\n\\nJust tell me what you want!`;\n\nreturn [{\n    json: {\n        ...$json,\n        response_message: message,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "98979695-0093-0091-0987-654321098765",
+      "name": "Help Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chat_id}}",
+        "text": "={{$json.response_message}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "97969594-0092-0090-9876-543210987654",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1340, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram OMAD Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract User Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract User Data": {
+      "main": [
+        [
+          {
+            "node": "Classify Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Intent": {
+      "main": [
+        [
+          {
+            "node": "Is Single Meal?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Single Meal?": {
+      "main": [
+        [
+          {
+            "node": "Generate Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Help Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Help Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1.0.0"
+}
