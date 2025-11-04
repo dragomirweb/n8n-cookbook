@@ -1,0 +1,727 @@
+{
+  "name": "AI Meal Planner - Main Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ]
+      },
+      "id": "8f7e6d5c-4b3a-2918-7654-321098765432",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "auto-generated-on-activation",
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram OMAD Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract user data from Telegram update\nconst input = $input.first().json;\nconst message = input.message || input.callback_query?.message;\nconst from = input.message?.from || input.callback_query?.from;\n\n// Handle different update types\nlet messageText = '';\nlet callbackData = null;\n\nif (input.message) {\n    messageText = input.message.text || input.message.caption || '';\n} else if (input.callback_query) {\n    messageText = input.callback_query.message.text || '';\n    callbackData = input.callback_query.data;\n}\n\n// Extract user info\nconst userData = {\n    telegram_user_id: from.id,\n    telegram_username: from.username || null,\n    telegram_first_name: from.first_name || null,\n    telegram_last_name: from.last_name || null,\n    chat_id: message.chat.id,\n    message_id: message.message_id,\n\n    // Message details\n    message_text: messageText,\n    callback_data: callbackData,\n    is_command: messageText.startsWith('/'),\n    command: messageText.startsWith('/') ? messageText.split(' ')[0].substring(1) : null,\n    command_args: messageText.startsWith('/') ? messageText.split(' ').slice(1).join(' ') : null,\n\n    // Message type\n    message_type: input.message ? 'message' : 'callback_query',\n\n    // Timestamp\n    timestamp: new Date().toISOString(),\n    request_id: `${from.id}_${Date.now()}`\n};\n\nreturn [{ json: userData }];"
+      },
+      "id": "7e6d5c4b-3a29-1807-6543-210987654321",
+      "name": "Extract User Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CRITICAL: Rate Limiting Check\n// Prevents users from spamming expensive AI calls\n\nconst userId = $json.telegram_user_id;\nconst rateLimitKey = `rate_limit:${userId}`;\n\n// Configuration\nconst MAX_REQUESTS_PER_HOUR = 20;\nconst WINDOW_SECONDS = 3600;\n\n// Note: This requires Redis integration\n// For now, we'll simulate with in-memory (production needs Redis)\n\n// Simulated Redis operations (replace with actual Redis calls)\nlet requestCount = 1; // In production: await $redis.incr(rateLimitKey)\n\n// Check rate limit\nif (requestCount > MAX_REQUESTS_PER_HOUR) {\n    const retryAfter = 3600; // 1 hour in seconds\n    \n    return [{\n        json: {\n            ...$ json,\n            rate_limited: true,\n            retry_after: retryAfter,\n            error_message: `⚠️ Rate limit exceeded. You've made ${requestCount} requests in the last hour. Please try again in ${Math.ceil(retryAfter / 60)} minutes.`,\n            should_respond: true\n        }\n    }];\n}\n\n// Set expiration on first request\nif (requestCount === 1) {\n    // In production: await $redis.expire(rateLimitKey, WINDOW_SECONDS)\n}\n\nreturn [{ \n    json: { \n        ...$json,\n        rate_limited: false, \n        request_count: requestCount,\n        rate_limit_remaining: MAX_REQUESTS_PER_HOUR - requestCount\n    } \n}];"
+      },
+      "id": "6d5c4b3a-2918-0706-5432-109876543210",
+      "name": "Rate Limit Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.rate_limited}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "5c4b3a29-1807-0605-4321-098765432109",
+      "name": "Is Rate Limited?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CRITICAL: Request Queue Management\n// Prevents concurrent requests from same user (race conditions)\n\nconst userId = $json.telegram_user_id;\nconst requestKey = `request_lock:${userId}`;\nconst requestId = $json.request_id;\n\n// Configuration\nconst LOCK_TTL_SECONDS = 300; // 5 minutes\n\n// Note: This requires Redis integration\n// For now, we'll simulate (production needs Redis)\n\n// Check if user has pending request\n// In production: const existingRequest = await $redis.get(requestKey)\nconst existingRequest = null; // Simulated\n\nif (existingRequest) {\n    return [{\n        json: {\n            ...$json,\n            queued: true,\n            error_message: \"⏳ Please wait for your previous request to complete. Only one request at a time.\",\n            should_respond: true\n        }\n    }];\n}\n\n// Set lock with expiration\n// In production: await $redis.setex(requestKey, LOCK_TTL_SECONDS, requestId)\n\nreturn [{ \n    json: { \n        ...$json,\n        queued: false,\n        request_lock_set: true\n    } \n}];"
+      },
+      "id": "4b3a2918-0706-0504-3210-987654321098",
+      "name": "Request Queue Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.queued}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "3a291807-0605-0403-2109-876543210987",
+      "name": "Is Queued?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/rpc/get_or_create_user",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_API_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_telegram_user_id\": {{$json.telegram_user_id}},\n  \"p_telegram_username\": \"{{$json.telegram_username}}\",\n  \"p_telegram_first_name\": \"{{$json.telegram_first_name}}\",\n  \"p_telegram_last_name\": \"{{$json.telegram_last_name}}\"\n}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryOnHttpStatusCodes": "408,429,500,502,503,504"
+          }
+        }
+      },
+      "id": "29180706-0504-0302-1098-765432109876",
+      "name": "Get/Create User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Supabase response and merge with user data\nconst supabaseResponse = $input.first().json;\nconst userData = $('Request Queue Check').first().json;\n\n// Supabase returns array with user data\nconst dbUser = Array.isArray(supabaseResponse) ? supabaseResponse[0] : supabaseResponse;\n\nreturn [{\n    json: {\n        ...userData,\n        user_id: dbUser.user_id,\n        is_new_user: dbUser.is_new_user,\n        user_profile: dbUser.profile\n    }\n}];"
+      },
+      "id": "18070605-0403-0201-0987-654321098765",
+      "name": "Parse User Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/sendChatAction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{$json.chat_id}},\n  \"action\": \"typing\"\n}",
+        "options": {}
+      },
+      "id": "07060504-0302-0100-9876-543210987654",
+      "name": "Send Typing Indicator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram OMAD Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build intent classification prompt\nconst messageText = $json.message_text;\nconst command = $json.command;\n\n// Simple intent classification (can be enhanced with AI)\nlet intent = 'help';\n\nif (command) {\n    // Command-based intent\n    const intentMap = {\n        'start': 'help',\n        'meal': 'single_meal',\n        'week': 'weekly_plan',\n        'grocery': 'grocery_list',\n        'history': 'meal_history',\n        'settings': 'settings',\n        'help': 'help'\n    };\n    intent = intentMap[command] || 'help';\n} else {\n    // Keyword-based intent (simple version)\n    const text = messageText.toLowerCase();\n    \n    if (text.includes('cook4me') || text.includes('pressure')) {\n        intent = 'single_meal_cook4me';\n    } else if (text.includes('traditional') || text.includes('grill') || text.includes('bake')) {\n        intent = 'single_meal_traditional';\n    } else if (text.includes('week') || text.includes('7 day') || text.includes('plan')) {\n        intent = 'weekly_plan';\n    } else if (text.includes('grocery') || text.includes('shopping')) {\n        intent = 'grocery_list';\n    } else if (text.includes('setting') || text.includes('preference')) {\n        intent = 'settings';\n    } else if (text.includes('meal') || text.includes('recipe') || text.includes('food')) {\n        // Default to user's preferred cooking method\n        const cookingMethod = $json.user_profile?.default_cooking_method || 'cook4me';\n        intent = cookingMethod === 'cook4me' ? 'single_meal_cook4me' : 'single_meal_traditional';\n    }\n}\n\nreturn [{\n    json: {\n        ...$json,\n        intent: intent,\n        intent_confidence: 0.95,\n        classified_at: new Date().toISOString()\n    }\n}];"
+      },
+      "id": "06050403-0201-0099-8765-432109876543",
+      "name": "Classify Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "rules": [
+            {
+              "value1": "={{$json.intent}}",
+              "operation": "equals",
+              "value2": "single_meal_cook4me"
+            },
+            {
+              "value1": "={{$json.intent}}",
+              "operation": "equals",
+              "value2": "single_meal_traditional"
+            },
+            {
+              "value1": "={{$json.intent}}",
+              "operation": "equals",
+              "value2": "weekly_plan"
+            },
+            {
+              "value1": "={{$json.intent}}",
+              "operation": "equals",
+              "value2": "grocery_list"
+            },
+            {
+              "value1": "={{$json.intent}}",
+              "operation": "equals",
+              "value2": "settings"
+            },
+            {
+              "value1": "={{$json.intent}}",
+              "operation": "equals",
+              "value2": "meal_history"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "05040302-0100-0098-7654-321098765432",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        2440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Placeholder for Cook4me meal generation\n// In production, this would call the Cook4me sub-workflow\n\nreturn [{\n    json: {\n        ...$json,\n        response_type: 'meal',\n        response_message: `🍽️ *Cook4me Meal Generated*\\n\\n*Chicken & Rice Bowl*\\n\\nCalories: 2,290 kcal\\nProtein: 145g\\nCarbs: 255g\\nFat: 72g\\n\\n_This is a placeholder. In production, this calls the Cook4me sub-workflow._\\n\\nUse /meal for a real meal generation.`,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "04030201-0099-0097-6543-210987654321",
+      "name": "Cook4me Meal (Placeholder)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Placeholder for Traditional meal generation\n\nreturn [{\n    json: {\n        ...$json,\n        response_type: 'meal',\n        response_message: `👨‍🍳 *Traditional Meal Generated*\\n\\n*Grilled Chicken with Vegetables*\\n\\nCalories: 2,310 kcal\\nProtein: 148g\\nCarbs: 248g\\nFat: 75g\\n\\n_This is a placeholder. In production, this calls the Traditional sub-workflow._`,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "03020100-0098-0096-5432-109876543210",
+      "name": "Traditional Meal (Placeholder)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Placeholder for Weekly plan generation\n\nreturn [{\n    json: {\n        ...$json,\n        response_type: 'weekly_plan',\n        response_message: `📅 *Weekly Meal Plan*\\n\\n*Monday*: Asian Chicken Stir-Fry\\n*Tuesday*: Mediterranean Salmon\\n*Wednesday*: Mexican Beef Bowl\\n*Thursday*: Italian Chicken Pasta\\n*Friday*: Indian Curry\\n*Saturday*: American Grilled\\n*Sunday*: Thai Fish\\n\\n_This is a placeholder. In production, this generates full 7-day plan._`,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "02010099-0097-0095-4321-098765432109",
+      "name": "Weekly Plan (Placeholder)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Placeholder for Grocery list\n\nreturn [{\n    json: {\n        ...$json,\n        response_type: 'grocery_list',\n        response_message: `🛒 *Grocery List*\\n\\n*Proteins*\\n• Chicken breast: 2.1 kg\\n• Salmon: 400g\\n\\n*Produce*\\n• Bell peppers: 6 pcs\\n• Onions: 4 pcs\\n\\n_This is a placeholder. In production, this generates full consolidated list._`,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "01009998-0096-0094-3210-987654321098",
+      "name": "Grocery List (Placeholder)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Placeholder for Settings\n\nreturn [{\n    json: {\n        ...$json,\n        response_type: 'settings',\n        response_message: `⚙️ *Your Settings*\\n\\nCalories: 2,300 kcal/day\\nProtein: 130-160g\\nCooking Method: Cook4me\\n\\nUse /settings to update your preferences.\\n\\n_This is a placeholder._`,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "00999897-0095-0093-2109-876543210987",
+      "name": "Settings (Placeholder)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Placeholder for Meal History\n\nreturn [{\n    json: {\n        ...$json,\n        response_type: 'meal_history',\n        response_message: `📊 *Meal History*\\n\\n*Last 7 Days*\\n\\n• Jan 10: Chicken Stir-Fry (⭐⭐⭐⭐⭐)\\n• Jan 9: Grilled Salmon (⭐⭐⭐⭐)\\n• Jan 8: Beef Tacos (⭐⭐⭐⭐⭐)\\n\\n_This is a placeholder._`,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "99989796-0094-0092-1098-765432109876",
+      "name": "Meal History (Placeholder)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Help/General response\nconst isNewUser = $json.is_new_user;\n\nlet message = '';\n\nif (isNewUser) {\n    message = `👋 *Welcome to OMAD Meal Planner!*\\n\\nI'm your AI-powered meal planning assistant for One Meal A Day (OMAD) nutrition.\\n\\n*What I can do:*\\n\\n🍽️ Generate custom OMAD meals\\n  • Cook4me pressure cooker recipes\\n  • Traditional cooking methods\\n\\n📅 Create 7-day meal plans\\n  • Variety guaranteed\\n  • Auto-generated grocery lists\\n\\n⚖️ Track nutrition accurately\\n  • 2,300 cal target\\n  • 130-160g protein\\n  • Optimized macros\\n\\n*Quick Start:*\\n\\n/meal - Generate a single meal\\n/week - Create weekly plan\\n/settings - Update preferences\\n\\n*Ready to start?* Just type what you'd like! Example: \"Generate a chicken meal\"`;\n} else {\n    message = `🤖 *OMAD Meal Planner*\\n\\n*Available Commands:*\\n\\n/meal - Generate single meal\\n/week - 7-day meal plan\\n/grocery - View grocery list\\n/history - View past meals\\n/settings - Update preferences\\n/help - Show this message\\n\\n*Or just describe what you want:*\\n\\n• \"Cook4me chicken meal\"\\n• \"Traditional grilled fish\"\\n• \"Plan my week\"\\n\\nI'm here to help! 🍽️`;\n}\n\nreturn [{\n    json: {\n        ...$json,\n        response_type: 'help',\n        response_message: message,\n        parse_mode: 'Markdown'\n    }\n}];"
+      },
+      "id": "98979695-0093-0091-0987-654321098765",
+      "name": "Help Response (Default)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chat_id}}",
+        "text": "={{$json.response_message}}",
+        "additionalFields": {
+          "parse_mode": "={{$json.parse_mode || 'Markdown'}}"
+        }
+      },
+      "id": "97969594-0092-0090-9876-543210987654",
+      "name": "Send Response to User",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2880,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram OMAD Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chat_id}}",
+        "text": "={{$json.error_message}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "96959493-0091-0089-8765-432109876543",
+      "name": "Send Error Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram OMAD Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chat_id}}",
+        "text": "={{$json.error_message}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "95949392-0090-0088-7654-321098765432",
+      "name": "Send Queue Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Telegram OMAD Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Release request lock after completion\nconst userId = $json.telegram_user_id;\nconst requestKey = `request_lock:${userId}`;\n\n// In production: await $redis.del(requestKey)\n\nreturn [{\n    json: {\n        ...$json,\n        request_lock_released: true,\n        completed_at: new Date().toISOString()\n    }\n}];"
+      },
+      "id": "94939291-0089-0087-6543-210987654321",
+      "name": "Release Request Lock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract User Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract User Data": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit Check": {
+      "main": [
+        [
+          {
+            "node": "Is Rate Limited?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Rate Limited?": {
+      "main": [
+        [
+          {
+            "node": "Send Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Request Queue Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Queue Check": {
+      "main": [
+        [
+          {
+            "node": "Is Queued?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Queued?": {
+      "main": [
+        [
+          {
+            "node": "Send Queue Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get/Create User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get/Create User": {
+      "main": [
+        [
+          {
+            "node": "Parse User Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse User Data": {
+      "main": [
+        [
+          {
+            "node": "Send Typing Indicator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Typing Indicator": {
+      "main": [
+        [
+          {
+            "node": "Classify Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Intent": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Intent": {
+      "main": [
+        [
+          {
+            "node": "Cook4me Meal (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traditional Meal (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Weekly Plan (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Grocery List (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Settings (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Meal History (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Help Response (Default)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cook4me Meal (Placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Send Response to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traditional Meal (Placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Send Response to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Plan (Placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Send Response to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Grocery List (Placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Send Response to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings (Placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Send Response to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meal History (Placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Send Response to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Help Response (Default)": {
+      "main": [
+        [
+          {
+            "node": "Send Response to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Response to User": {
+      "main": [
+        [
+          {
+            "node": "Release Request Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "1",
+      "name": "production"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "2",
+      "name": "meal-planner"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "3",
+      "name": "telegram"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1.0.0",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "your-n8n-instance-id"
+  }
+}
